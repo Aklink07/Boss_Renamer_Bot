@@ -2,5 +2,4 @@ pyrogram
 tgcrypto
 motor
 dnspython
-pyaes
-asyncio
+flask
