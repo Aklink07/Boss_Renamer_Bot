@@ -74,9 +74,7 @@ async def start(client, message):
 async def cb_handler(client, cb):
     data = await user_data.find_one({"_id": cb.from_user.id}) or {}
     if cb.data == "help_menu":
-        help_t = ("🚀 **How to use Caption?**\n\n"
-                  "Set caption like this:\n`/set_caption 📂 Name: {filename} \n\n✅ Joined: @TechnoKrrish`\n\n"
-                  "बॉट अपने आप `{filename}` की जगह नया नाम डाल देगा।")
+        help_t = ("🚀 **Help Menu**\n\nUse `/set_caption {filename}` to set dynamic caption.\nUse `/set_thumb` to save thumbnail.")
         await cb.message.edit(help_t, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
     elif cb.data == "back_home": await start(client, cb.message)
     elif cb.data == "thumb_menu":
@@ -85,16 +83,9 @@ async def cb_handler(client, cb):
             await cb.message.delete()
             await client.send_photo(cb.message.chat.id, thumb, caption="🖼 **Current Thumbnail**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete", callback_data="del_thumb_cb"), InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
         else: await cb.answer("❌ No thumbnail saved!", show_alert=True)
-    elif cb.data == "cap_menu":
-        cap = data.get("caption") or "No custom caption set."
-        await cb.message.edit(f"📝 **Current Caption:**\n\n`{cap}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete", callback_data="del_cap_cb"), InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
     elif cb.data == "del_thumb_cb":
         await user_data.update_one({"_id": cb.from_user.id}, {"$set": {"thumb": None}})
         await cb.answer("🗑 Deleted!", show_alert=True)
-        await start(client, cb.message)
-    elif cb.data == "del_cap_cb":
-        await user_data.update_one({"_id": cb.from_user.id}, {"$set": {"caption": None}})
-        await cb.answer("🗑 Caption Deleted!", show_alert=True)
         await start(client, cb.message)
 
 @app.on_message(filters.command("set_thumb") & filters.reply)
@@ -108,8 +99,8 @@ async def s_cap(client, message):
     try:
         cap = message.text.split(" ", 1)[1]
         await user_data.update_one({"_id": message.from_user.id}, {"$set": {"caption": cap}}, upsert=True)
-        await message.reply(f"✅ **Caption Saved!**\n\nUse `{{filename}}` in your text to show the new name automatically.")
-    except: await message.reply("Usage: `/set_caption 📂 File: {filename}`")
+        await message.reply(f"✅ **Caption Saved!**")
+    except: await message.reply("Usage: `/set_caption File: {filename}`")
 
 @app.on_message(filters.command("rename") & filters.reply)
 async def rename_handler(client, message):
@@ -127,26 +118,22 @@ async def rename_handler(client, message):
     start_time = time.time()
     
     try:
-        # 1. Download File
-        file_path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_time))
+        # --- FIXED DOWNLOAD PATH ---
+        raw_path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_time))
+        file_path = str(raw_path) # Converting PosixPath to string to fix error
         
-        # 2. Setup Thumbnail & Caption Logic
         u_data = await user_data.find_one({"_id": user_id}) or {}
         thumb_id = u_data.get("thumb")
         custom_caption = u_data.get("caption")
-        
-        # --- Caption Logic ---
-        if custom_caption:
-            # {filename} को असली नए नाम से बदलें
-            caption = custom_caption.replace("{filename}", new_name)
-        else:
-            caption = f"**{new_name}**"
+        caption = custom_caption.replace("{filename}", new_name) if custom_caption else new_name
 
-        thumb_path = await client.download_media(thumb_id, file_name=f"thumb_{user_id}.jpg") if thumb_id else None
-        
-        # Metadata check for video
+        thumb_path = None
+        if thumb_id:
+            raw_thumb = await client.download_media(thumb_id, file_name=f"thumb_{user_id}.jpg")
+            thumb_path = str(raw_thumb)
+
         duration = width = height = 0
-        if file_path.endswith((".mp4", ".mkv", ".webm")):
+        if file_path.lower().endswith((".mp4", ".mkv", ".webm")):
             metadata = extractMetadata(createParser(file_path))
             if metadata:
                 if metadata.has("duration"): duration = metadata.get('duration').seconds
@@ -156,8 +143,7 @@ async def rename_handler(client, message):
         await m.edit("📤 **Uploading...**")
         start_u = time.time()
 
-        # 3. Upload
-        if reply.video or new_name.endswith((".mp4", ".mkv", ".webm")):
+        if reply.video or file_path.lower().endswith((".mp4", ".mkv", ".webm")):
             await client.send_video(message.chat.id, video=file_path, thumb=thumb_path, caption=caption, duration=duration, width=width, height=height, progress=progress_bar, progress_args=(m, start_u))
         else:
             await client.send_document(message.chat.id, file_path, thumb=thumb_path, caption=caption, progress=progress_bar, progress_args=(m, start_u))
@@ -167,7 +153,7 @@ async def rename_handler(client, message):
         await m.edit(f"❌ **Error:** `{e}`")
     finally:
         if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
-        if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
+        if 'thumb_path' in locals() and thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
 
 async def main():
     await start_web_server()
