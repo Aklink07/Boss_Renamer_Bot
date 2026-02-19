@@ -1,7 +1,7 @@
 import os, time, asyncio, logging
 from aiohttp import web
 from hydrogram import Client, filters, idle
-from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
+from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # --- LOGGING ---
@@ -27,7 +27,7 @@ async def get_bot_settings():
 async def update_bot_mode(mode: bool):
     await settings_data.update_one({"_id": "config"}, {"$set": {"is_public": mode}}, upsert=True)
 
-# --- WEB SERVER (For Render Uptime) ---
+# --- WEB SERVER (For Uptime) ---
 async def handle(request): return web.Response(text="Pro Bot is Flying! ✈️")
 async def start_web_server():
     server = web.Application()
@@ -41,14 +41,10 @@ app = Client("pro_rename_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_T
 
 # --- UTILS ---
 def humanbytes(size):
-    if not size: return ""
-    power = 2**10
-    n = 0
-    Dic_powerN = {0: ' ', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
-    while size > power:
-        size /= power
-        n += 1
-    return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
+    if not size: return "0 B"
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024: return f"{size:.2f} {unit}"
+        size /= 1024
 
 async def progress_bar(current, total, status_msg, start_time):
     now = time.time()
@@ -66,44 +62,65 @@ async def progress_bar(current, total, status_msg, start_time):
 
 @app.on_message(filters.command("start"))
 async def start(client, message):
+    settings = await get_bot_settings()
     text = (f"🔥 **Welcome to Pro Rename Bot!**\n\n"
-            f"Hello {message.from_user.first_name}, I am a high-speed file renamer with custom thumbnail and caption support.\n\n"
-            f"📢 **Current Status:** `{'Public' if (await get_bot_settings())['is_public'] else 'Private'}`")
+            f"Hello {message.from_user.first_name}, I am a high-speed file renamer.\n\n"
+            f"📢 **Current Status:** `{'Public' if settings['is_public'] else 'Private'}`")
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛠 Help & Usage", callback_data="help_menu")],
         [InlineKeyboardButton("🖼 Thumbnail", callback_data="thumb_menu"), InlineKeyboardButton("📝 Caption", callback_data="cap_menu")]
     ])
-    await message.reply_text(text, reply_markup=buttons)
+    if message.reply_markup: # If called from callback
+        await message.edit_text(text, reply_markup=buttons)
+    else:
+        await message.reply_text(text, reply_markup=buttons)
+
+# --- CALLBACK QUERIES ---
 
 @app.on_callback_query(filters.regex("help_menu"))
 async def help_cb(client, cb):
-    help_text = ("🚀 **Help Menu**\n\n"
-                 "1️⃣ **Rename:** Send any file and reply to it with `/rename NewName.ext`.\n"
-                 "2️⃣ **Thumbnail:** Send a photo and reply to it with `/set_thumb`.\n"
-                 "3️⃣ **Caption:** Use `/set_caption` followed by your text.\n"
-                 "4️⃣ **Large Files:** I support files up to 2GB.\n\n"
-                 "**Admin Commands:** `/mode public` or `/mode private`")
-    await cb.message.edit(help_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
+    await cb.message.edit("🚀 **Help Menu**\n\n1. Send File > Reply `/rename Name.ext`\n2. Send Photo > Reply `/set_thumb`\n3. Use `/set_caption Text` for custom caption.", 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
+
+@app.on_callback_query(filters.regex("thumb_menu"))
+async def thumb_cb(client, cb):
+    data = await user_data.find_one({"_id": cb.from_user.id}) or {}
+    thumb = data.get("thumb")
+    if thumb:
+        await cb.message.delete()
+        await client.send_photo(cb.message.chat.id, thumb, caption="🖼 **Your Current Thumbnail**", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete", callback_data="del_thumb_cb"), InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
+    else:
+        await cb.answer("❌ No thumbnail saved!", show_alert=True)
+
+@app.on_callback_query(filters.regex("cap_menu"))
+async def cap_cb(client, cb):
+    data = await user_data.find_one({"_id": cb.from_user.id}) or {}
+    cap = data.get("caption") or "No custom caption set."
+    await cb.message.edit(f"📝 **Your Current Caption:**\n\n`{cap}`", 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete", callback_data="del_cap_cb"), InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
+
+@app.on_callback_query(filters.regex("del_thumb_cb"))
+async def del_thumb_cb(client, cb):
+    await user_data.update_one({"_id": cb.from_user.id}, {"$set": {"thumb": None}})
+    await cb.answer("🗑 Thumbnail Deleted!", show_alert=True)
+    await start(client, cb.message)
+
+@app.on_callback_query(filters.regex("del_cap_cb"))
+async def del_cap_cb(client, cb):
+    await user_data.update_one({"_id": cb.from_user.id}, {"$set": {"caption": None}})
+    await cb.answer("🗑 Caption Deleted!", show_alert=True)
+    await start(client, cb.message)
 
 @app.on_callback_query(filters.regex("back_home"))
 async def back_home(client, cb):
     await start(client, cb.message)
 
-@app.on_message(filters.command("mode") & filters.user(ADMIN))
-async def toggle_mode(client, message):
-    try:
-        choice = message.text.split(" ", 1)[1].lower()
-        if choice == "public":
-            await update_bot_mode(True)
-            await message.reply("✅ Bot is now **PUBLIC** (Everyone can use).")
-        else:
-            await update_bot_mode(False)
-            await message.reply("🔒 Bot is now **PRIVATE** (Only Admin can use).")
-    except: await message.reply("Usage: `/mode public` or `/mode private`")
+# --- COMMANDS ---
 
 @app.on_message(filters.command("set_thumb") & filters.reply)
 async def s_thumb(client, message):
-    if not message.reply_to_message.photo: return await message.reply("Reply to a photo!")
+    if not message.reply_to_message.photo: return await message.reply("❌ Reply to a photo!")
     await user_data.update_one({"_id": message.from_user.id}, {"$set": {"thumb": message.reply_to_message.photo.file_id}}, upsert=True)
     await message.reply("✅ **Custom Thumbnail Saved!**")
 
@@ -113,39 +130,40 @@ async def s_cap(client, message):
         cap = message.text.split(" ", 1)[1]
         await user_data.update_one({"_id": message.from_user.id}, {"$set": {"caption": cap}}, upsert=True)
         await message.reply(f"✅ **Caption Saved:**\n`{cap}`")
-    except: await message.reply("Usage: `/set_caption Your Text Here`")
+    except: await message.reply("Usage: `/set_caption Text`")
 
 @app.on_message(filters.command("rename") & filters.reply)
 async def rename_handler(client, message):
     user_id = message.from_user.id
     settings = await get_bot_settings()
     if not settings['is_public'] and user_id != ADMIN:
-        return await message.reply("🔒 **Sorry!** This bot is currently in private mode.")
+        return await message.reply("🔒 Bot is in Private Mode.")
 
     reply = message.reply_to_message
     if not (reply.document or reply.video or reply.audio): return
     
     try: new_name = message.text.split(" ", 1)[1]
-    except: return await message.reply("❌ **Error:** Please provide a new name.\nExample: `/rename movie.mkv`")
+    except: return await message.reply("❌ Provide a name: `/rename file.mkv`")
 
-    m = await message.reply("📥 **Downloading to high-speed server...**")
+    m = await message.reply("📥 **Downloading...**")
     start_time = time.time()
     
     try:
-        # Step 1: Download
         file_path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_time))
         
-        # Step 2: Get User Settings
         u_data = await user_data.find_one({"_id": user_id}) or {}
         thumb_id = u_data.get("thumb")
         caption = u_data.get("caption") or new_name
         
-        thumb_path = await client.download_media(thumb_id) if thumb_id else None
-        
-        await m.edit("📤 **Uploading to Telegram...**")
+        # Download thumb securely
+        thumb_path = None
+        if thumb_id:
+            try: thumb_path = await client.download_media(thumb_id)
+            except: thumb_path = None
+
+        await m.edit("📤 **Uploading...**")
         start_u = time.time()
 
-        # Step 3: Upload with Large File Handling
         if reply.document:
             await client.send_document(message.chat.id, file_path, thumb=thumb_path, caption=caption, progress=progress_bar, progress_args=(m, start_u))
         elif reply.video:
@@ -160,11 +178,10 @@ async def rename_handler(client, message):
     except Exception as e:
         await m.edit(f"❌ **Error:** `{e}`")
 
-# --- START BOT ---
+# --- MAIN ---
 async def main():
     await start_web_server()
     await app.start()
-    print("🚀 Pro Rename Bot Started Successfully!")
     await idle()
 
 if __name__ == "__main__":
