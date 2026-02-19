@@ -10,10 +10,9 @@ API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URL = os.environ.get("DB_URL")
 ADMIN = int(os.environ.get("ADMIN", 0))
-# Yahan apna Telegram username bina @ ke likho (Example: "TechnoKrrish")
 DEVELOPER_USR = os.environ.get("DEVELOPER_USR", "RoyalKrrishna") 
 
-# --- DATABASE & WEB SERVER (Same as before) ---
+# --- DATABASE SETUP ---
 db_client = AsyncIOMotorClient(DB_URL)
 db = db_client["SecureRenamePro_V3"]
 user_data = db["users"]
@@ -23,6 +22,7 @@ async def is_bot_public():
     doc = await settings_data.find_one({"_id": "config"})
     return doc.get("public", False) if doc else False
 
+# --- WEB SERVER (For Render Uptime) ---
 async def handle(request): return web.Response(text="Bot is Secure & Running! 🛡️")
 async def start_web_server():
     server = web.Application()
@@ -53,13 +53,38 @@ async def progress_bar(current, total, status_msg, start_time):
         try: await status_msg.edit(f"✨ **Uploading with High Speed...**\n\n{bar}{info}")
         except: pass
 
-# --- UI MESSAGES ---
+# --- UI MESSAGES (BEAUTIFIED) ---
+
 START_TEXT = (
-    "✨ **Welcome to Pro Rename Bot**\n\n"
+    "✨ **Welcome to Pro Rename Bot v3.1** ✨\n\n"
     "Hello **{name}**, I am a premium, high-speed file renamer bot designed for speed and security.\n\n"
     "🛡️ **Current Security:** `{mode}`\n"
     "⚡ **Server Status:** `Online & High Speed`\n\n"
     "I can rename files up to **2GB** instantly with custom caption support!"
+)
+
+DETAILED_HELP = (
+    "🚀 **USER GUIDE & HELP MENU**\n"
+    "━━━━━━━━━━━━━━━━━━\n\n"
+    "**1️⃣ HOW TO RENAME?**\n"
+    "• Send any File, Video, or Audio to the bot.\n"
+    "• **Reply** to that file with the command:\n"
+    "   `/rename New_File_Name.ext` \n"
+    "• *Example:* `/rename movie.mp4`\n\n"
+    "**2️⃣ CUSTOM CAPTION**\n"
+    "• You can set a professional caption template:\n"
+    "   `/set_caption 📂 File: {filename} \n🚀 Join: @Channel` \n"
+    "• *Note:* `{filename}` will automatically be replaced with your new file name.\n"
+    "• Use `/del_caption` to reset it.\n\n"
+    "**3️⃣ BOT SPECIFICATIONS**\n"
+    "✅ **Max Size:** 2GB (Telegram Limit)\n"
+    "✅ **Speed:** Ultra-Fast Cloud Server\n"
+    "✅ **Safety:** Fully Encrypted Processing\n"
+    "✅ **Database:** MongoDB Cloud Secured\n\n"
+    "**4️⃣ ADMIN ONLY COMMANDS**\n"
+    "• `/mode public` - Everyone can use the bot.\n"
+    "• `/mode private` - Only Admin can use the bot.\n"
+    "━━━━━━━━━━━━━━━━━━"
 )
 
 # --- HOME FUNCTION ---
@@ -79,24 +104,23 @@ async def send_start_msg(message, is_callback=False):
 @app.on_callback_query(filters.regex("help_msg|back|view_cap|about_msg"))
 async def cb_handler(client, cb):
     if cb.data == "help_msg":
-        await cb.message.edit("🚀 **How to use?**\n\n1. Send File.\n2. Reply `/rename NewName.exm`.\n3. Custom Caption: `/set_caption {filename}`", 
-                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
+        await cb.message.edit(DETAILED_HELP, 
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Home", callback_data="back")]]))
     elif cb.data == "about_msg":
-        # Yahan Admin link fix kiya gaya hai
         about = (f"💎 **About Pro Rename Bot**\n\n"
                  f"👤 **Developer:** [{DEVELOPER_USR}](https://t.me/{DEVELOPER_USR})\n"
                  f"🚀 **Platform:** Hydrogram + Render\n"
                  f"📦 **Framework:** Python v3.10+\n"
                  f"✨ **Feature:** Dynamic Caption & High Speed")
-        await cb.message.edit(about, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]), disable_web_page_preview=True)
+        await cb.message.edit(about, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Home", callback_data="back")]]), disable_web_page_preview=True)
     elif cb.data == "view_cap":
         data = await user_data.find_one({"_id": cb.from_user.id}) or {}
-        cap = data.get("caption", "No custom caption set")
-        await cb.message.edit(f"📝 **Your Caption:**\n\n`{cap}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
+        cap = data.get("caption", "Default (No custom caption set)")
+        await cb.message.edit(f"📝 **Your Caption Template:**\n\n`{cap}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Home", callback_data="back")]]))
     elif cb.data == "back":
         await send_start_msg(cb.message, is_callback=True)
 
-# --- COMMANDS (Rename, Caption, Mode) ---
+# --- COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message): await send_start_msg(message)
 
@@ -116,11 +140,17 @@ async def s_cap(client, message):
         await message.reply("✅ Caption Saved!")
     except: await message.reply("Usage: `/set_caption {filename}`")
 
+@app.on_message(filters.command("del_caption"))
+async def d_cap(client, message):
+    await user_data.update_one({"_id": message.from_user.id}, {"$set": {"caption": None}})
+    await message.reply("🗑️ Caption Deleted!")
+
 @app.on_message(filters.command("rename") & filters.reply)
 async def rename_handler(client, message):
     if not await is_bot_public() and message.from_user.id != ADMIN:
         return await message.reply("🔒 Private Bot.")
     reply = message.reply_to_message
+    if not (reply.document or reply.video or reply.audio): return
     try:
         new_name = message.text.split(" ", 1)[1]
         status = await message.reply("📥 Downloading...")
