@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 from aiohttp import web
-from pyrogram import Client, filters
+from hydrogram import Client, filters, idle
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # --- LOGGING ---
@@ -24,17 +24,16 @@ user_data = db["users"]
 async def update_data(user_id, key, value):
     await user_data.update_one({"_id": user_id}, {"$set": {key: value}}, upsert=True)
 
-# --- WEB SERVER (aiohttp) - This keeps Render happy ---
+# --- WEB SERVER (aiohttp) ---
 async def handle(request):
-    return web.Response(text="Bot is Alive! 🚀")
+    return web.Response(text="Bot is Alive and Pro! 🚀")
 
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
+    server = web.Application()
+    server.router.add_get('/', handle)
+    runner = web.AppRunner(server)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
-    await site.start()
+    await web.TCPSite(runner, '0.0.0.0', 8080).start()
     print("✅ Web Server started on Port 8080")
 
 # --- BOT CLIENT ---
@@ -45,13 +44,13 @@ async def progress_bar(current, total, status_msg, start_time):
     now = time.time()
     if round(now - start_time) % 5 == 0 or current == total:
         percentage = current * 100 / total
-        try: await status_msg.edit(f"**Processing:** {round(percentage, 2)}%")
+        try: await status_msg.edit(f"**Processing:** {round(percentage, 2)}% ⬆️")
         except: pass
 
 # --- HANDLERS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply(f"👋 **Hi {message.from_user.first_name}!**\nI am finally fixed! Send a file to rename.")
+    await message.reply(f"👋 **Hi {message.from_user.first_name}!**\nI am a Pro Rename Bot (Fixed). Send a file to rename.")
 
 @app.on_message(filters.command("set_thumb") & filters.reply)
 async def set_t(client, message):
@@ -67,7 +66,7 @@ async def ren(client, message):
     if not (reply.document or reply.video or reply.audio): return
     
     try: new_name = message.text.split(" ", 1)[1]
-    except: return await message.reply("Usage: `/rename name.mkv`")
+    except: return await message.reply("Usage: `/rename filename.mkv`")
 
     m = await message.reply("⬇️ Downloading...")
     start_t = time.time()
@@ -75,7 +74,6 @@ async def ren(client, message):
     try:
         path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_t))
         
-        # Check Thumb
         data = await user_data.find_one({"_id": message.from_user.id}) or {}
         t_id = data.get("thumb")
         t_path = await client.download_media(t_id) if t_id else None
@@ -91,15 +89,13 @@ async def ren(client, message):
     except Exception as e:
         await m.edit(f"❌ Error: {e}")
 
-# --- MAIN EXECUTION (The Final Fix) ---
+# --- MAIN RUNNER ---
 async def main():
-    # Start the Web Server
     await start_web_server()
-    # Start the Bot
     await app.start()
-    print("✅ Bot is Online!")
-    # Keep running forever
-    await asyncio.Event().wait()
+    print("✅ Bot is Online with Hydrogram!")
+    await idle()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
