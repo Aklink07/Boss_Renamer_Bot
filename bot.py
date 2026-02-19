@@ -2,8 +2,6 @@ import os, time, asyncio, logging
 from threading import Thread
 from flask import Flask
 from pyrogram import Client, filters, idle
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import UserNotParticipant
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # --- LOGGING ---
@@ -16,12 +14,11 @@ API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URL = os.environ.get("DB_URL")
 ADMIN = int(os.environ.get("ADMIN", 0))
-FORCE_SUB = os.environ.get("FORCE_SUB", "") # Example: "MyChannelUsername"
 
-# --- WEB SERVER FOR RENDER & UPTIME ---
+# --- WEB SERVER FOR UPTIME ---
 web_app = Flask(__name__)
 @web_app.route('/')
-def home(): return "Pro Rename Bot is Online! 🚀"
+def home(): return "Pro Rename Bot is Running! 🚀"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -44,7 +41,7 @@ async def update_data(user_id, key, value):
 # --- BOT CLIENT ---
 app = Client("pro_rename_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- PROGRESS BAR ---
+# --- PROGRESS BAR UTILS ---
 def get_size(bytes):
     for unit in ['B', 'KB', 'MB', 'GB']:
         if bytes < 1024: return f"{bytes:.2f} {unit}"
@@ -62,31 +59,16 @@ async def progress_bar(current, total, status_msg, start_time):
         try: await status_msg.edit(f"**Processing...**\n\n{progress}{details}")
         except: pass
 
-# --- FORCE SUBSCRIBE CHECK ---
-async def check_user(client, message):
-    if not FORCE_SUB: return True
-    try:
-        await client.get_chat_member(FORCE_SUB, message.from_user.id)
-        return True
-    except UserNotParticipant:
-        await message.reply(f"❌ **Access Denied!**\n\nPlease join our channel to use this bot.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB}")]]))
-        return False
-    except Exception: return True
-
 # --- HANDLERS ---
 
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    if not await check_user(client, message): return
-    await message.reply_text(f"👋 **Hi {message.from_user.first_name}!**\n\nI am a Pro File Rename Bot.\n\n"
-        "**Commands:**\n"
-        "🔹 Send Photo & Reply `/set_thumb` - Set Thumbnail\n"
-        "🔹 `/view_thumb` - See your Thumbnail\n"
-        "🔹 `/del_thumb` - Delete Thumbnail\n"
-        "🔹 `/set_caption text` - Set Custom Caption\n"
-        "🔹 `/view_caption` - See current Caption\n"
-        "🔹 Reply to File with `/rename NewName.ext` - Start Renaming")
+    await message.reply_text(f"👋 **Hi {message.from_user.first_name}!**\n\n"
+        "I am a Pro File Rename Bot.\n\n"
+        "**Features:**\n"
+        "🔹 Reply Photo with `/set_thumb` to save thumbnail.\n"
+        "🔹 Use `/set_caption` to save a custom caption.\n"
+        "🔹 Reply to a file with `/rename NewName.ext` to rename it.")
 
 @app.on_message(filters.command("set_thumb") & filters.reply)
 async def set_thumbnail(client, message):
@@ -95,56 +77,52 @@ async def set_thumbnail(client, message):
     await update_data(message.from_user.id, "thumb", message.reply_to_message.photo.file_id)
     await message.reply("✅ **Thumbnail Saved!**")
 
-@app.on_message(filters.command("view_thumb"))
-async def view_thumbnail(client, message):
-    data = await get_data(message.from_user.id)
-    thumb = data.get("thumb")
-    if thumb: await message.reply_photo(thumb, caption="Your saved thumbnail.")
-    else: await message.reply("No thumbnail saved.")
-
 @app.on_message(filters.command("del_thumb"))
 async def delete_thumbnail(client, message):
+    if message.from_user.id != ADMIN: return
     await update_data(message.from_user.id, "thumb", None)
     await message.reply("🗑️ **Thumbnail Deleted!**")
 
 @app.on_message(filters.command("set_caption"))
 async def set_cap(client, message):
+    if message.from_user.id != ADMIN: return
     try:
         caption = message.text.split(" ", 1)[1]
         await update_data(message.from_user.id, "caption", caption)
         await message.reply(f"✅ **Custom Caption Set:**\n`{caption}`")
-    except: await message.reply("Usage: `/set_caption My Custom Text`")
+    except: await message.reply("Usage: `/set_caption My Custom Caption`")
 
 @app.on_message(filters.command("rename") & filters.reply)
 async def rename_process(client, message):
-    if not await check_user(client, message): return
     if message.from_user.id != ADMIN: return
     
     reply = message.reply_to_message
-    if not (reply.document or reply.video or reply.audio): return
+    if not (reply.document or reply.video or reply.audio): 
+        return await message.reply("❌ Reply to a document, video, or audio file.")
     
     try: new_name = message.text.split(" ", 1)[1]
-    except: return await message.reply("Usage: `/rename New_File_Name.mp4`")
+    except: return await message.reply("Usage: `/rename New_Name.ext`")
 
-    m = await message.reply("⬇️ **Downloading to Server...**")
+    m = await message.reply("⬇️ **Downloading...**")
     start_time = time.time()
     
     try:
-        # Download
+        # Download file
         file_path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_time))
         
-        # Get Settings
+        # Get Database Settings
         data = await get_data(message.from_user.id)
         thumb_id = data.get("thumb")
         custom_caption = data.get("caption")
         
+        # Download thumbnail if exists
         thumb_path = await client.download_media(thumb_id) if thumb_id else None
-        caption = custom_caption.replace("{filename}", new_name) if custom_caption else new_name
+        caption = custom_caption if custom_caption else new_name
 
-        await m.edit("⬆️ **Uploading to Telegram...**")
+        await m.edit("⬆️ **Uploading...**")
         start_time = time.time()
 
-        # Upload
+        # Send file back
         if reply.document:
             await client.send_document(message.chat.id, file_path, thumb=thumb_path, caption=caption, progress=progress_bar, progress_args=(m, start_time))
         elif reply.video:
@@ -159,7 +137,7 @@ async def rename_process(client, message):
     except Exception as e:
         await m.edit(f"❌ **Error:** `{e}`")
 
-# --- MAIN RUNNER ---
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    print("🚀 Pro Rename Bot Starting...")
+    print("🚀 Bot Starting...")
     app.run()
