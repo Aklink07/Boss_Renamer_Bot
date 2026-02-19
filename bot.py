@@ -3,31 +3,30 @@ from aiohttp import web
 from hydrogram import Client, filters, idle
 from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
-from hachoir.metadata import extractMetadata
-from hachoir.parser import createParser
 
-# --- LOGGING ---
+# --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URL = os.environ.get("DB_URL")
 ADMIN = int(os.environ.get("ADMIN", 0))
 
-# --- DATABASE ---
+# --- DATABASE SETUP ---
 db_client = AsyncIOMotorClient(DB_URL)
-db = db_client["ProRenameBotV2"]
+db = db_client["RenameBotPro_NoThumb"]
 user_data = db["users"]
 settings_data = db["settings"]
 
-async def get_bot_settings():
+async def is_bot_public():
     doc = await settings_data.find_one({"_id": "config"})
-    return doc if doc else {"is_public": False}
+    return doc.get("public", False) if doc else False
 
-# --- WEB SERVER ---
-async def handle(request): return web.Response(text="Bot is Alive! 🚀")
+# --- WEB SERVER (For UptimeRobot) ---
+async def handle(request): return web.Response(text="Bot is Secure & Running! 🛡️")
 async def start_web_server():
     server = web.Application()
     server.router.add_get('/', handle)
@@ -35,14 +34,14 @@ async def start_web_server():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', 8080).start()
 
-app = Client("pro_rename_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# --- BOT CLIENT ---
+app = Client("rename_bot_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- UTILS ---
-def humanbytes(size):
-    if not size: return "0 B"
+# --- UTILS (Size & Progress) ---
+def get_human_size(bytes):
     for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024: return f"{size:.2f} {unit}"
-        size /= 1024
+        if bytes < 1024: return f"{bytes:.2f} {unit}"
+        bytes /= 1024
 
 async def progress_bar(current, total, status_msg, start_time):
     now = time.time()
@@ -51,113 +50,121 @@ async def progress_bar(current, total, status_msg, start_time):
         percentage = current * 100 / total
         speed = current / diff if diff > 0 else 0
         eta = (total - current) / speed if speed > 0 else 0
-        p_bar = f"**[{'■' * int(percentage/10)}{'□' * (10 - int(percentage/10))}]** {round(percentage, 2)}%"
-        tmp = f"🚀 Speed: {humanbytes(speed)}/s\n📦 Done: {humanbytes(current)} / {humanbytes(total)}\n⏳ ETA: {round(eta)}s"
-        try: await status_msg.edit(f"**⚡ Processing Your File...**\n\n{p_bar}\n{tmp}")
+        bar = f"**[{'■' * int(percentage/10)}{'□' * (10 - int(percentage/10))}]** {round(percentage, 2)}%"
+        info = f"\n🚀 Speed: {get_human_size(speed)}/s\n📦 Done: {get_human_size(current)} / {get_human_size(total)}\n⏳ ETA: {round(eta)}s"
+        try: await status_msg.edit(f"**⚡ Securely Processing...**\n\n{bar}\n{info}")
         except: pass
 
 # --- HANDLERS ---
+
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    settings = await get_bot_settings()
-    text = (f"🔥 **Welcome to Pro Rename Bot!**\n\n"
-            f"Hello {message.from_user.first_name}, I am a high-speed file renamer.\n\n"
-            f"📢 **Current Status:** `{'Public' if settings['is_public'] else 'Private'}`")
+    is_pub = await is_bot_public()
+    text = (f"🛡️ **Advanced Rename Bot v2.0**\n\n"
+            f"Hello {message.from_user.first_name}, I am a high-speed secure file renamer.\n\n"
+            f"🔹 **Mode:** `{'Public (Open)' if is_pub else 'Private (Admin Only)'}`\n\n"
+            "**Commands:**\n"
+            "📝 `/set_caption Your Text` - Save Caption\n"
+            "❌ `/del_caption` - Remove Caption\n"
+            "🔄 Reply to file with `/rename NewName.ext` to begin.")
+    
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛠 Help", callback_data="help_menu")],
-        [InlineKeyboardButton("🖼 Thumbnail", callback_data="thumb_menu"), InlineKeyboardButton("📝 Caption", callback_data="cap_menu")]
+        [InlineKeyboardButton("🛠 Help", callback_data="help_msg")],
+        [InlineKeyboardButton("📝 My Caption", callback_data="view_cap")]
     ])
-    if message.reply_markup: await message.edit_text(text, reply_markup=buttons)
-    else: await message.reply_text(text, reply_markup=buttons)
+    await message.reply_text(text, reply_markup=buttons)
 
-@app.on_callback_query(filters.regex("help_menu|back_home|thumb_menu|cap_menu|del_thumb_cb|del_cap_cb"))
+@app.on_callback_query(filters.regex("help_msg|back|view_cap"))
 async def cb_handler(client, cb):
-    data = await user_data.find_one({"_id": cb.from_user.id}) or {}
-    if cb.data == "help_menu":
-        help_t = ("🚀 **Help Menu**\n\nUse `/set_caption {filename}` to set dynamic caption.\nUse `/set_thumb` to save thumbnail.")
-        await cb.message.edit(help_t, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
-    elif cb.data == "back_home": await start(client, cb.message)
-    elif cb.data == "thumb_menu":
-        thumb = data.get("thumb")
-        if thumb:
-            await cb.message.delete()
-            await client.send_photo(cb.message.chat.id, thumb, caption="🖼 **Current Thumbnail**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete", callback_data="del_thumb_cb"), InlineKeyboardButton("⬅️ Back", callback_data="back_home")]]))
-        else: await cb.answer("❌ No thumbnail saved!", show_alert=True)
-    elif cb.data == "del_thumb_cb":
-        await user_data.update_one({"_id": cb.from_user.id}, {"$set": {"thumb": None}})
-        await cb.answer("🗑 Deleted!", show_alert=True)
+    if cb.data == "help_msg":
+        await cb.message.edit("🚀 **How to Rename?**\n\n1. Send any file.\n2. Reply to it with `/rename NewName.mp4`.\n\n"
+                              "💡 **Caption Trick:** Use `{filename}` in your caption to automatically insert the new file name.", 
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
+    elif cb.data == "view_cap":
+        data = await user_data.find_one({"_id": cb.from_user.id}) or {}
+        cap = data.get("caption", "Default (Filename Only)")
+        await cb.message.edit(f"📝 **Current Caption Template:**\n\n`{cap}`", 
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
+    elif cb.data == "back":
         await start(client, cb.message)
 
-@app.on_message(filters.command("set_thumb") & filters.reply)
-async def s_thumb(client, message):
-    if not message.reply_to_message.photo: return await message.reply("❌ Reply to a photo!")
-    await user_data.update_one({"_id": message.from_user.id}, {"$set": {"thumb": message.reply_to_message.photo.file_id}}, upsert=True)
-    await message.reply("✅ **Custom Thumbnail Saved!**")
+@app.on_message(filters.command("mode") & filters.user(ADMIN))
+async def change_mode(client, message):
+    try:
+        val = message.text.split(" ", 1)[1].lower()
+        new_mode = True if val == "public" else False
+        await settings_data.update_one({"_id": "config"}, {"$set": {"public": new_mode}}, upsert=True)
+        await message.reply(f"✅ Bot mode updated to **{val.upper()}**")
+    except: await message.reply("Usage: `/mode public` or `/mode private`")
 
 @app.on_message(filters.command("set_caption"))
 async def s_cap(client, message):
     try:
         cap = message.text.split(" ", 1)[1]
         await user_data.update_one({"_id": message.from_user.id}, {"$set": {"caption": cap}}, upsert=True)
-        await message.reply(f"✅ **Caption Saved!**")
-    except: await message.reply("Usage: `/set_caption File: {filename}`")
+        await message.reply("✅ **Custom Caption Saved!**")
+    except: await message.reply("Usage: `/set_caption My Name: {filename}`")
+
+@app.on_message(filters.command("del_caption"))
+async def d_cap(client, message):
+    await user_data.update_one({"_id": message.from_user.id}, {"$set": {"caption": None}})
+    await message.reply("🗑️ **Caption Deleted!**")
 
 @app.on_message(filters.command("rename") & filters.reply)
 async def rename_handler(client, message):
     user_id = message.from_user.id
-    settings = await get_bot_settings()
-    if not settings['is_public'] and user_id != ADMIN: return
+    is_pub = await is_bot_public()
     
-    reply = message.reply_to_message
-    if not (reply.document or reply.video or reply.audio): return
-    
-    try: new_name = message.text.split(" ", 1)[1]
-    except: return await message.reply("❌ Usage: `/rename filename.mkv`")
+    # SECURITY CHECK
+    if not is_pub and user_id != ADMIN:
+        return await message.reply("🔒 **Private Bot:** Only Admin can use this bot currently.")
 
-    m = await message.reply("📥 **Downloading...**")
+    reply = message.reply_to_message
+    if not (reply.document or reply.video or reply.audio):
+        return await message.reply("❌ Please reply to a File, Video, or Audio.")
+    
+    try:
+        new_name = message.text.split(" ", 1)[1]
+    except IndexError:
+        return await message.reply("❌ Provide a name: `/rename My_Movie.mp4`")
+
+    m = await message.reply("📥 **Downloading to Secure Server...**")
     start_time = time.time()
     
     try:
-        # --- FIXED DOWNLOAD PATH ---
+        # Download
         raw_path = await client.download_media(reply, file_name=new_name, progress=progress_bar, progress_args=(m, start_time))
-        file_path = str(raw_path) # Converting PosixPath to string to fix error
+        file_path = str(raw_path) # Critical for PosixPath error
         
+        # Caption Logic
         u_data = await user_data.find_one({"_id": user_id}) or {}
-        thumb_id = u_data.get("thumb")
         custom_caption = u_data.get("caption")
         caption = custom_caption.replace("{filename}", new_name) if custom_caption else new_name
 
-        thumb_path = None
-        if thumb_id:
-            raw_thumb = await client.download_media(thumb_id, file_name=f"thumb_{user_id}.jpg")
-            thumb_path = str(raw_thumb)
-
-        duration = width = height = 0
-        if file_path.lower().endswith((".mp4", ".mkv", ".webm")):
-            metadata = extractMetadata(createParser(file_path))
-            if metadata:
-                if metadata.has("duration"): duration = metadata.get('duration').seconds
-                if metadata.has("width"): width = metadata.get('width')
-                if metadata.has("height"): height = metadata.get('height')
-
-        await m.edit("📤 **Uploading...**")
+        await m.edit("📤 **Uploading Securely...**")
         start_u = time.time()
 
-        if reply.video or file_path.lower().endswith((".mp4", ".mkv", ".webm")):
-            await client.send_video(message.chat.id, video=file_path, thumb=thumb_path, caption=caption, duration=duration, width=width, height=height, progress=progress_bar, progress_args=(m, start_u))
-        else:
-            await client.send_document(message.chat.id, file_path, thumb=thumb_path, caption=caption, progress=progress_bar, progress_args=(m, start_u))
+        # Send File
+        await client.send_document(
+            chat_id=message.chat.id,
+            document=file_path,
+            caption=caption,
+            progress=progress_bar,
+            progress_args=(m, start_u)
+        )
         
         await m.delete()
     except Exception as e:
-        await m.edit(f"❌ **Error:** `{e}`")
+        await m.edit(f"❌ **Security Error:** `{e}`")
     finally:
-        if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
-        if 'thumb_path' in locals() and thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
 
+# --- STARTUP ---
 async def main():
     await start_web_server()
     await app.start()
+    print("✅ Secure Rename Bot Online!")
     await idle()
 
 if __name__ == "__main__":
