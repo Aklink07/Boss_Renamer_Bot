@@ -11,7 +11,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URL = os.environ.get("DB_URL")
 ADMIN = int(os.environ.get("ADMIN", 0))
 # Yahan apna Telegram username bina @ ke likho (Example: "TechnoKrrish")
-DEVELOPER_USR = os.environ.get("DEVELOPER_USR", "Admin") 
+DEVELOPER_USR = os.environ.get("DEVELOPER_USR", "RoyalKrrishna") 
 
 # --- DATABASE & WEB SERVER (Same as before) ---
 db_client = AsyncIOMotorClient(DB_URL)
