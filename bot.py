@@ -10,7 +10,7 @@ API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URL = os.environ.get("DB_URL")
 ADMIN = int(os.environ.get("ADMIN", 0))
-DEVELOPER_USR = os.environ.get("DEVELOPER_USR", "RoyalKrrishna") 
+DEVELOPER_USR = os.environ.get("DEVELOPER_USR", "TechnicalAklink") 
 
 # --- DATABASE SETUP ---
 db_client = AsyncIOMotorClient(DB_URL)
