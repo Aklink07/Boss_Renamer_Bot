@@ -56,7 +56,7 @@ async def progress_bar(current, total, status_msg, start_time):
 # --- UI MESSAGES (BEAUTIFIED) ---
 
 START_TEXT = (
-    "✨ **Welcome to Pro Rename Bot v3.1** ✨\n\n"
+    "✨ **Welcome to Boss_Pro Rename Bot v3.1** ✨\n\n"
     "Hello **{name}**, I am a premium, high-speed file renamer bot designed for speed and security.\n\n"
     "🛡️ **Current Security:** `{mode}`\n"
     "⚡ **Server Status:** `Online & High Speed`\n\n"
